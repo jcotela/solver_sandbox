@@ -13,5 +13,6 @@ pip install -r requirements.txt
 Uncompress example with
 ```
 cd examples
-tar -xzf bracket.tar.gz
+chmod u+x extract
+./extract
 ```

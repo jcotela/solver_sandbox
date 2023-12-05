@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+for filename in *.tar.gz; do
+  tar -xzf ${filename}
+done
