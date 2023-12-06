@@ -2,7 +2,7 @@ import logging
 
 from scipy.io import mmread
 from scipy.linalg import norm
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_array
 
 log = logging.getLogger(__name__)
 
@@ -17,8 +17,8 @@ def read_mm(file_path):
     if data.shape[1] == 1:
         return data.reshape((data.shape[0],))
 
-    # return matrices as scipy.sparse.csr_matrix
-    return csr_matrix(data)
+    # return matrices as scipy.sparse.csr_array
+    return csr_array(data)
 
 
 def check_solution(A, x, b, log_level=logging.INFO):
