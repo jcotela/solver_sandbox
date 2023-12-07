@@ -6,8 +6,8 @@ from scipy import sparse
 from scipy.linalg import norm
 from scipy.sparse.linalg import cg, spsolve_triangular
 
-from performance import profile, solver_report_callback as report
-from utilities import check_solution
+from .performance import profile, solver_report_callback as report
+from .utilities import check_solution
 
 log = logging.getLogger(__name__)
 
@@ -40,17 +40,54 @@ class GaussSeidel_ew(object):
 
 class GaussSeidel(object):
     def __init__(self, A, b, relaxation_w=1.0):
-        self.U = sparse.triu(A, k=1, format='csr')
-        self.L = sparse.tril(A, k=0, format='csr')
-        self.b = b
+        U = sparse.triu(A, k=1, format='csr')
+        L = sparse.tril(A, k=-1, format='csr')
+        D = sparse.diags(A.diagonal())
         self.w = relaxation_w
+        self.b = self.w * b
+        self.L = self.w * L +  D
+        self.U = self.w * U + (self.w - 1) * D
 
     def __call__(self, x):
         return spsolve_triangular(self.L, self.b - self.U @ x)
 
 
-def test_gauss_seidel():
-    A = sparse.csr_array(np.array([[16, 3], [7, -11]], dtype=np.float64))
+class Jacobi(object):
+    def __init__(self, A, b, relaxation_w=1.0):
+        U = sparse.triu(A, k=1, format='csr')
+        L = sparse.tril(A, k=-1, format='csr')
+        self.LU = L + U
+        self.D = A.diagonal()
+        self.b = b
+        self.w = relaxation_w
+
+    def __call__(self, x):
+        y = (1.0 - self.w) * x
+        return y + self.w * np.divide(self.b - self.LU @ x, self.D)
+
+
+def test_gauss_seidel(w=1.0):
+    #A = sparse.csr_array(np.array([[16, 3], [7, -11]], dtype=np.float64))
+    #b = np.array([11, 13], dtype=np.float64)
+    #x = np.array([1.0, 1.0])
+
+    A = sparse.csr_array([
+        [10.0, -1.0, 2.0, 0.0],
+        [-1.0, 11.0, -1.0, 3.0],
+        [2.0, -1.0, 10.0, -1.0],
+        [0.0, 3.0, -1.0, 8.0],
+    ])
+    b = np.array([6.0, 25.0, -11.0, 15.0])
+    x = np.array([0.0, 0.0, 0.0, 0.0])
+
+    gs = GaussSeidel(A, b, w)
+    for _ in range(10):
+        x = gs(x)
+        print(x)
+
+
+def test_jacobi(w=1.0):
+    A = sparse.csr_array(np.array([[2, 1], [5, 7]], dtype=np.float64))
     b = np.array([11, 13], dtype=np.float64)
     x = np.array([1.0, 1.0])
 
@@ -63,10 +100,12 @@ def test_gauss_seidel():
     #b = np.array([6.0, 25.0, -11.0, 15.0])
     #x = np.array([0.0, 0.0, 0.0, 0.0])
 
-    gs = GaussSeidel(A, b)
-    for _ in range(10):
-        x = gs(x)
+    j = Jacobi(A, b, w)
+    for _ in range(25):
+        x = j(x)
         print(x)
+
+    print(A@x)
 
 
 def solve_iteration(A, x, residual, inter, restr):
@@ -77,11 +116,12 @@ def solve_iteration(A, x, residual, inter, restr):
     with profile('coarse matrix calculation'):
         coarse_A = restr @ A @ inter
 
-    gs = GaussSeidel(A, residual)
+    #smooth = Jacobi(A, residual, relaxation_w=0.5)
+    smooth = GaussSeidel(A, residual, relaxation_w=1.0)
 
     with profile('smoothing'):
         for _ in range(smoothing_iter):
-            delta = gs(delta)
+            delta = smooth(delta)
 
     with profile('coarse solve'):
         coarse_res = restr @ (residual - A @ delta)
@@ -110,7 +150,9 @@ def solve(A, b, inter, restr):
     return x
 
 if __name__ == '__main__':
-    #test_gauss_seidel()
+    #test_gauss_seidel(1.5)
+    test_jacobi()
+    exit()
     from pathlib import Path
     from utilities import read_mm
 
@@ -128,3 +170,14 @@ if __name__ == '__main__':
 
     with profile('solution check'):
         check_solution(A, x, b)
+
+    '''
+    GS 1.5
+    real    4m46.455s
+    user    5m41.484s
+    sys     3m7.611s
+    GS 1.0
+    real    4m47.758s
+    user    5m49.839s
+    sys     3m37.062s
+    '''

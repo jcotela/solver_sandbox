@@ -17,8 +17,8 @@ def run():
 
     with profile('Loading'):
         base_path = Path('examples/bracket')
-        A = read_mm(base_path / 'last_fine_A.mm')
-        b = read_mm(base_path / 'last_fine_b.mm')
+        A = read_mm(base_path / 'first_fine_A.mm')
+        b = read_mm(base_path / 'first_fine_b.mm')
         inter = read_mm(base_path / 'interpolation.mm')
         restr = read_mm(base_path / 'restriction.mm')
 
@@ -41,3 +41,10 @@ def run():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)
     run()
+
+#WARNING:performance:[Total diagonal precond + CG time] time: 3.307033084998693 seconds
+#WARNING:utilities:residual norm: 0.011642262344557503
+#WARNING:performance:[Total deflated CG time] time: 10.799229497999477 seconds
+#WARNING:utilities:residual norm: 0.007080576477184729
+#WARNING:performance:[Total hierarchical iterative time] time: 323.88491730900205 seconds
+#WARNING:utilities:residual norm: 0.010818643689523006
