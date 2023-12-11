@@ -90,7 +90,6 @@ class TestGaussSeidel(unittest.TestCase):
 
         for _ in range(25):
             x = gs(x)
-            print(b - A@x)
 
         self.assertLessEqual(norm(b - A@x), 1e-6)
 
