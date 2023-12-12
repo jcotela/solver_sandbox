@@ -5,8 +5,9 @@ import numpy as np
 from scipy import sparse
 from scipy.linalg import norm
 from scipy.sparse.linalg import cg, spsolve_triangular
+from scipy.sparse import dok_array, csr_array
 
-from .performance import profile, solver_report_callback as report
+from .performance import profile
 from .utilities import check_solution
 
 log = logging.getLogger(__name__)
@@ -107,21 +108,87 @@ def solve(A, b, inter, restr):
 
     return x
 
+
+class BlockSystem(object):
+    def __init__(self, A, b, inter, restr, q_inter, q_restr):
+        self.inter = inter
+        self.restr = restr
+        self.q_inter = q_inter
+        self.q_restr = q_restr
+
+        self.All = restr @ A @ inter
+        self.Aqq = q_restr @ A @ q_inter
+        self.Alq = restr @ A @ q_inter
+        self.Aql = self.Alq.transpose()
+        self.res_l = restr @ b
+        self.res_q = q_restr @ b
+
+
+def solve_iter_separate(bs: BlockSystem, x):
+
+    smoothing_iter = 5
+    relax = 0.5
+
+    delta_l = np.zeros_like(bs.res_l)
+    delta_q = np.zeros_like(bs.res_q)
+
+    with profile('smoothing'):
+        for _ in range(smoothing_iter):
+            l_smoother = GaussSeidel(bs.All, bs.res_l - bs.Alq @ delta_q, relax)
+            q_smoother = GaussSeidel(bs.Aqq, bs.res_q - bs.Aql @ delta_l, relax)
+            delta_l = l_smoother(delta_l)
+            delta_q = q_smoother(delta_q)
+
+    with profile('coarse solve'):
+        coarse_res = bs.res_l - bs.All @ delta_l - bs.Alq @ delta_q
+        coarse_delta, _ = cg(bs.All, coarse_res, atol=1e-1)
+
+    with profile('update solution'):
+        delta_l += coarse_delta
+        bs.res_l -= bs.All @ delta_l + bs.Alq @ delta_q
+        bs.res_q -= bs.Aql @ delta_l + bs.Aqq @ delta_q
+        x += bs.inter @ delta_l + bs.q_inter @ delta_q
+        residual = bs.inter @ bs.res_l + bs.q_inter @ bs.res_q
+
+    return x, residual
+
+def solve_separate(A, b, inter, restr, q_inter, q_restr):
+
+    with profile('scale separation'):
+        bs = BlockSystem(A, b, inter, restr, q_inter, q_restr)
+
+    x = np.zeros_like(b)
+    norm_res = norm_b = norm(b)
+    tol = 1e-5
+    it = 0
+    max_iter = 100
+
+    while (norm_res > tol * norm_b and it < max_iter):
+        x, residual = solve_iter_separate(bs, x)
+        norm_res = norm(residual)
+        it += 1
+        log.info("%d %f", it, norm_res)
+
+    return x
+
+
 if __name__ == '__main__':
     from pathlib import Path
-    from utilities import read_mm
+    from .utilities import read_mm
 
     logging.basicConfig(level=logging.DEBUG)
 
     with profile('problem load'):
         base_path = Path('./examples/bracket')
 
-        A = read_mm(base_path / 'first_fine_A.mm')
-        b = read_mm(base_path / 'first_fine_b.mm')
+        A = read_mm(base_path / 'last_fine_A.mm')
+        b = read_mm(base_path / 'last_fine_b.mm')
         inter = read_mm(base_path / 'interpolation.mm')
         restr = read_mm(base_path / 'restriction.mm')
+        q_inter = read_mm(base_path / 'quad_interpolation.mm')
+        q_restr = read_mm(base_path / 'quad_restriction.mm')
 
-    x = solve(A, b, inter, restr)
+    x = solve_separate(A, b, inter, restr, q_inter, q_restr)
 
     with profile('solution check'):
         check_solution(A, x, b)
