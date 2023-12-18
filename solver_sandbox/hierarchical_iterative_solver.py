@@ -5,7 +5,6 @@ import numpy as np
 from scipy import sparse
 from scipy.linalg import norm
 from scipy.sparse.linalg import cg, spsolve_triangular
-from scipy.sparse import dok_array, csr_array
 
 from .performance import profile
 from .utilities import check_solution
@@ -111,17 +110,21 @@ def solve(A, b, inter, restr):
 
 class BlockSystem(object):
     def __init__(self, A, b, inter, restr, q_inter, q_restr):
-        self.inter = inter
-        self.restr = restr
-        self.q_inter = q_inter
-        self.q_restr = q_restr
+        self.inter = inter.trunc()
+        self.q_inter = q_inter.trunc()
+        self.restr = self.inter.transpose()
+        self.q_restr = self.q_inter.transpose()
+        self.Q = inter @ self.restr + q_inter @ self.q_restr
+        self.invQ = 2 * self.Q.trunc() - self.Q
 
-        self.All = restr @ A @ inter
-        self.Aqq = q_restr @ A @ q_inter
-        self.Alq = restr @ A @ q_inter
+        self.A = self.Q @ A @ self.invQ
+
+        self.All = self.restr @ A @ self.inter
+        self.Aqq = self.q_restr @ A @ self.q_inter
+        self.Alq = self.restr @ A @ self.q_inter
         self.Aql = self.Alq.transpose()
-        self.res_l = restr @ b
-        self.res_q = q_restr @ b
+        self.res_l = self.restr @ b
+        self.res_q = self.q_restr @ b
 
 
 def solve_iter_separate(bs: BlockSystem, x):
@@ -135,8 +138,8 @@ def solve_iter_separate(bs: BlockSystem, x):
     with profile('smoothing'):
         for _ in range(smoothing_iter):
             l_smoother = GaussSeidel(bs.All, bs.res_l - bs.Alq @ delta_q, relax)
-            q_smoother = GaussSeidel(bs.Aqq, bs.res_q - bs.Aql @ delta_l, relax)
             delta_l = l_smoother(delta_l)
+            q_smoother = GaussSeidel(bs.Aqq, bs.res_q - bs.Aql @ delta_l, relax)
             delta_q = q_smoother(delta_q)
 
     with profile('coarse solve'):
@@ -168,6 +171,8 @@ def solve_separate(A, b, inter, restr, q_inter, q_restr):
         norm_res = norm(residual)
         it += 1
         log.info("%d %f", it, norm_res)
+        #log.debug(norm(b - A@x))
+        #log.debug(norm(residual))
 
     return x
 
