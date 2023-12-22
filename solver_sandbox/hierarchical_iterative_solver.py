@@ -39,77 +39,90 @@ class GaussSeidel_ew(object):
 
 
 class GaussSeidel(object):
-    def __init__(self, A, b, relaxation_w=1.0):
+    def __init__(self, A, relaxation_w=1.0):
         U = sparse.triu(A, k=1, format='csr')
         L = sparse.tril(A, k=-1, format='csr')
         D = sparse.diags(A.diagonal())
         self.w = relaxation_w
-        self.b = self.w * b
         self.L = self.w * L +  D
         self.U = self.w * U + (self.w - 1) * D
 
-    def __call__(self, x):
-        return spsolve_triangular(self.L, self.b - self.U @ x)
+    def __call__(self, x, b):
+        return spsolve_triangular(self.L, self.w * b - self.U @ x)
 
 
 class Jacobi(object):
-    def __init__(self, A, b, relaxation_w=1.0):
+    def __init__(self, A, relaxation_w=1.0):
         U = sparse.triu(A, k=1, format='csr')
         L = sparse.tril(A, k=-1, format='csr')
         self.LU = L + U
         self.D = A.diagonal()
-        self.b = b
         self.w = relaxation_w
 
-    def __call__(self, x):
+    def __call__(self, x, b):
         y = (1.0 - self.w) * x
-        return y + self.w * np.divide(self.b - self.LU @ x, self.D)
+        return y + self.w * np.divide(b - self.LU @ x, self.D)
 
 
-def solve_iteration(A, x, residual, inter, restr):
+def solve_iteration(bs, x, residual):
 
-    smoothing_iter = 20
+    smoothing_iter = 5
     delta = np.zeros_like(x)
 
-    with profile('coarse matrix calculation'):
-        coarse_A = restr @ A @ inter
-
     #smooth = Jacobi(A, residual, relaxation_w=0.5)
-    smooth = GaussSeidel(A, residual, relaxation_w=1.0)
+    smooth = GaussSeidel(bs.A, relaxation_w=0.5)
 
     with profile('smoothing'):
         for _ in range(smoothing_iter):
-            delta = smooth(delta)
+            delta = smooth(delta, residual)
 
     with profile('coarse solve'):
-        coarse_res = restr @ (residual - A @ delta)
-        coarse_delta, _ = cg(coarse_A, coarse_res, atol=1e-6)
+        bs.res_l = bs.restr @ bs.Q @ (residual - bs.A @ delta)
+        coarse_delta, _ = cg(bs.All, bs.res_l, atol=1e-5)
 
 
     with profile('update solution'):
-        delta += inter @ coarse_delta
-        x += delta
-        residual -= A @ delta
+        delta += bs.inter @ coarse_delta
+        x += bs.invQ @ delta
+        residual -= bs.A @ bs.invQ @ delta
 
     return x, residual
 
 
-def solve(A, b, inter, restr):
+def solve(A, b, inter, restr, q_inter, q_restr):
     residual = np.array(b)
     x = np.zeros_like(b)
     norm_res = norm_b = norm(b)
     tol = 1e-5
+    it = 0
+    max_iter = 100
 
-    while (norm_res > tol * norm_b):
-        x, residual = solve_iteration(A, x, residual, inter, restr)
+    #bs = CoarseSystem(A, b, inter, restr)
+    bs = BlockSystem(A, b, inter, restr, q_inter, q_restr)
+
+    while (norm_res > tol * norm_b and it < max_iter):
+        x, residual = solve_iteration(bs, x, residual)
         norm_res = norm(residual)
-        log.info(norm_res)
+        it += 1
+        log.info("%d %f", it, norm_res)
+        log.debug(norm(b - A@x))
+        log.debug(norm(residual))
 
     return x
 
 
+class CoarseSystem(object):
+    def __init__(self, A, b, inter, restr):
+        self.inter = inter
+        self.restr = restr
+
+        self.A = A
+        self.All = restr @ A @ inter
+        self.res_l = restr @ b
+
+
 class BlockSystem(object):
-    def __init__(self, A, b, inter, restr, q_inter, q_restr):
+    def __init__(self, A, b, inter, restr, q_inter, q_restr, relaxation_w=1.0):
         self.inter = inter.trunc()
         self.q_inter = q_inter.trunc()
         self.restr = self.inter.transpose()
@@ -126,25 +139,25 @@ class BlockSystem(object):
         self.res_l = self.restr @ b
         self.res_q = self.q_restr @ b
 
+        self.l_smoother = GaussSeidel(self.All, relaxation_w)
+        self.q_smoother = GaussSeidel(self.Aqq, relaxation_w)
+
 
 def solve_iter_separate(bs: BlockSystem, x):
 
     smoothing_iter = 5
-    relax = 0.5
 
     delta_l = np.zeros_like(bs.res_l)
     delta_q = np.zeros_like(bs.res_q)
 
     with profile('smoothing'):
         for _ in range(smoothing_iter):
-            l_smoother = GaussSeidel(bs.All, bs.res_l - bs.Alq @ delta_q, relax)
-            delta_l = l_smoother(delta_l)
-            q_smoother = GaussSeidel(bs.Aqq, bs.res_q - bs.Aql @ delta_l, relax)
-            delta_q = q_smoother(delta_q)
+            delta_l = bs.l_smoother(delta_l, bs.res_l - bs.Alq @ delta_q)
+            delta_q = bs.q_smoother(delta_q, bs.res_q - bs.Aql @ delta_l)
 
     with profile('coarse solve'):
         coarse_res = bs.res_l - bs.All @ delta_l - bs.Alq @ delta_q
-        coarse_delta, _ = cg(bs.All, coarse_res, atol=1e-1)
+        coarse_delta, _ = cg(bs.All, coarse_res, atol=1e-5)
 
     with profile('update solution'):
         delta_l += coarse_delta
@@ -158,13 +171,14 @@ def solve_iter_separate(bs: BlockSystem, x):
 def solve_separate(A, b, inter, restr, q_inter, q_restr):
 
     with profile('scale separation'):
-        bs = BlockSystem(A, b, inter, restr, q_inter, q_restr)
+        relax = 0.5
+        bs = BlockSystem(A, b, inter, restr, q_inter, q_restr, relax)
 
     x = np.zeros_like(b)
     norm_res = norm_b = norm(b)
     tol = 1e-5
     it = 0
-    max_iter = 100
+    max_iter = 10
 
     while (norm_res > tol * norm_b and it < max_iter):
         x, residual = solve_iter_separate(bs, x)
@@ -194,6 +208,7 @@ if __name__ == '__main__':
         q_restr = read_mm(base_path / 'quad_restriction.mm')
 
     x = solve_separate(A, b, inter, restr, q_inter, q_restr)
+    #x = solve(A, b, inter, restr, q_inter, q_restr)
 
     with profile('solution check'):
         check_solution(A, x, b)

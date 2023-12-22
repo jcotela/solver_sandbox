@@ -39,18 +39,18 @@ class TestJacobi(unittest.TestCase):
 
     def test_jacobi(self):
         A, b, x = test_4x4()
-        jacobi = Jacobi(A, b)
+        jacobi = Jacobi(A)
 
         for _ in range(25):
-            x = jacobi(x)
+            x = jacobi(x, b)
 
         self.assertLessEqual(norm(b - A@x), 1e-6)
 
         A, b, x = test_2x2_jacobi()
-        jacobi = Jacobi(A, b)
+        jacobi = Jacobi(A)
 
         for _ in range(35):
-            x = jacobi(x)
+            x = jacobi(x, b)
 
         self.assertLessEqual(norm(b - A@x), 1e-6)
 
@@ -58,18 +58,18 @@ class TestJacobi(unittest.TestCase):
     def test_relaxed_jacobi(self):
         A, b, x = test_4x4()
         w = 2.0/3.0
-        jacobi = Jacobi(A, b, w)
+        jacobi = Jacobi(A, w)
 
         for _ in range(30):
-            x = jacobi(x)
+            x = jacobi(x, b)
 
         self.assertLessEqual(norm(b - A@x), 1e-6)
 
         A, b, x = test_2x2_jacobi()
-        jacobi = Jacobi(A, b, w)
+        jacobi = Jacobi(A, w)
 
         for _ in range(60):
-            x = jacobi(x)
+            x = jacobi(x, b)
 
         self.assertLessEqual(norm(b - A@x), 1e-6)
 
@@ -78,18 +78,18 @@ class TestGaussSeidel(unittest.TestCase):
 
     def test_gauss_seidel(self):
         A, b, x = test_4x4()
-        gs = GaussSeidel(A, b)
+        gs = GaussSeidel(A, 1.0)
 
         for _ in range(25):
-            x = gs(x)
+            x = gs(x, b)
 
         self.assertLessEqual(norm(b - A@x), 1e-6)
 
         A, b, x = test_2x2_gauss_seidel()
-        gs = GaussSeidel(A, b)
+        gs = GaussSeidel(A, 1.0)
 
         for _ in range(25):
-            x = gs(x)
+            x = gs(x, b)
 
         self.assertLessEqual(norm(b - A@x), 1e-6)
 
@@ -97,17 +97,17 @@ class TestGaussSeidel(unittest.TestCase):
     def test_sor(self):
         A, b, x = test_4x4()
         w = 1.2
-        gs = GaussSeidel(A, b, w)
+        gs = GaussSeidel(A, w)
 
         for _ in range(25):
-            x = gs(x)
+            x = gs(x, b)
 
         self.assertLessEqual(norm(b - A@x), 1e-6)
 
         A, b, x = test_2x2_gauss_seidel()
-        gs = GaussSeidel(A, b, w)
+        gs = GaussSeidel(A, w)
 
         for _ in range(25):
-            x = gs(x)
+            x = gs(x, b)
 
         self.assertLessEqual(norm(b - A@x), 1e-6)
