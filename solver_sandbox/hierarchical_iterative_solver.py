@@ -69,7 +69,6 @@ def solve_iteration(bs, x, residual):
     smoothing_iter = 5
     delta = np.zeros_like(x)
 
-    #smooth = Jacobi(A, residual, relaxation_w=0.5)
     smooth = GaussSeidel(bs.A, relaxation_w=0.5)
 
     with profile('smoothing'):
@@ -77,14 +76,14 @@ def solve_iteration(bs, x, residual):
             delta = smooth(delta, residual)
 
     with profile('coarse solve'):
-        bs.res_l = bs.restr @ bs.Q @ (residual - bs.A @ delta)
+        bs.res_l = bs.restr @ (residual - bs.A @ delta)
         coarse_delta, _ = cg(bs.All, bs.res_l, atol=1e-5)
 
 
     with profile('update solution'):
         delta += bs.inter @ coarse_delta
-        x += bs.invQ @ delta
-        residual -= bs.A @ bs.invQ @ delta
+        x += delta
+        residual -= bs.A @ delta
 
     return x, residual
 
@@ -97,8 +96,8 @@ def solve(A, b, inter, restr, q_inter, q_restr):
     it = 0
     max_iter = 100
 
-    #bs = CoarseSystem(A, b, inter, restr)
-    bs = BlockSystem(A, b, inter, restr, q_inter, q_restr)
+    bs = CoarseSystem(A, b, inter, restr, q_inter, q_restr)
+    #bs = BlockSystem(A, b, inter, restr, q_inter, q_restr)
 
     while (norm_res > tol * norm_b and it < max_iter):
         x, residual = solve_iteration(bs, x, residual)
@@ -112,13 +111,18 @@ def solve(A, b, inter, restr, q_inter, q_restr):
 
 
 class CoarseSystem(object):
-    def __init__(self, A, b, inter, restr):
+    def __init__(self, A, b, inter, restr, q_inter, q_restr, relaxation_w=1.0):
+        int = inter.trunc()
+
+        self.Q = int @ restr + q_inter @ q_restr
+        self.invQ = 2 * self.Q.trunc() - self.Q
+
         self.inter = inter
-        self.restr = restr
+        self.restr = int.transpose() @ self.Q
 
         self.A = A
-        self.All = restr @ A @ inter
-        self.res_l = restr @ b
+        self.All = self.restr @ A @ self.inter
+        self.res_l = self.restr @ b
 
 
 class BlockSystem(object):
@@ -178,7 +182,7 @@ def solve_separate(A, b, inter, restr, q_inter, q_restr):
     norm_res = norm_b = norm(b)
     tol = 1e-5
     it = 0
-    max_iter = 10
+    max_iter = 100
 
     while (norm_res > tol * norm_b and it < max_iter):
         x, residual = solve_iter_separate(bs, x)
@@ -207,8 +211,8 @@ if __name__ == '__main__':
         q_inter = read_mm(base_path / 'quad_interpolation.mm')
         q_restr = read_mm(base_path / 'quad_restriction.mm')
 
-    x = solve_separate(A, b, inter, restr, q_inter, q_restr)
-    #x = solve(A, b, inter, restr, q_inter, q_restr)
+    #x = solve_separate(A, b, inter, restr, q_inter, q_restr)
+    x = solve(A, b, inter, restr, q_inter, q_restr)
 
     with profile('solution check'):
         check_solution(A, x, b)
