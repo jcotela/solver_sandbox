@@ -11,102 +11,112 @@ from .smoothing import GaussSeidel, Jacobi
 
 log = logging.getLogger(__name__)
 
-class GaussSeidel_ew(object):
-    def __init__(self, A, b, relaxation_w=1.0):
+
+class RawSystem(object):
+    """
+    Lagrange coarse + Hierarchical fine.
+    Raw matrices read from C++
+    """
+    def __init__(self, A, b, inter, restr, q_inter, q_restr):
         self.A = A
-        self.b = b
-        self.w = relaxation_w
+        self.residual = b.copy()
 
-    def __call__(self, x):
-        indptr = self.A.indptr
-        indices = self.A.indices
-        data = self.A.data
-        diag = 1.0
-        b = self.b
+        self.All = restr @ A @ inter
+        self.res_l = restr @ b
 
-        for row in range(self.A.shape[0]):
-            y = b[row]
-            for col,value in zip(
-                    indices[indptr[row]:indptr[row+1]],
-                    data[indptr[row]:indptr[row+1]]):
-                if row == col:
-                    diag = value
-                else:
-                    y -= value * x[col]
-            x[row] = y / diag
+        self.inter = inter
+        self.restr = restr
 
+    def postprocess_solution(self, x):
         return x
 
 
-class GaussSeidel(object):
-    def __init__(self, A, relaxation_w=1.0):
-        U = sparse.triu(A, k=1, format='csr')
-        L = sparse.tril(A, k=-1, format='csr')
-        D = sparse.diags(A.diagonal())
-        self.w = relaxation_w
-        self.L = self.w * L +  D
-        self.U = self.w * U + (self.w - 1) * D
+class MixedSystem(object):
+    """
+    Lagrange coarse + Hierarchical fine.
+    Recalculated matrices
+    """
+    def __init__(self, A, b, inter, restr, q_inter, q_restr):
+        int = inter.trunc()
 
-    def __call__(self, x, b):
-        return spsolve_triangular(self.L, self.w * b - self.U @ x)
+        self.Q = int @ restr + q_inter @ q_restr
+        self.invQ = 2 * self.Q.trunc() - self.Q
 
+        self.inter = inter
+        self.restr = int.transpose() @ self.Q
 
-class Jacobi(object):
-    def __init__(self, A, relaxation_w=1.0):
-        U = sparse.triu(A, k=1, format='csr')
-        L = sparse.tril(A, k=-1, format='csr')
-        self.LU = L + U
-        self.D = A.diagonal()
-        self.w = relaxation_w
+        self.A = A
+        self.residual = b.copy()
 
-    def __call__(self, x, b):
-        y = (1.0 - self.w) * x
-        return y + self.w * np.divide(b - self.LU @ x, self.D)
+        self.All = self.restr @ A @ self.inter
+        self.res_l = self.restr @ b
+
+    def postprocess_solution(self, x):
+        return x
 
 
-def solve_iteration(bs, x, residual):
+class PureHierarchicalSystem(object):
+    """
+    Hierarchical coarse + Hierarchical fine.
+    Recalculated matrices
+    """
+    def __init__(self, A, b, inter, restr, q_inter, q_restr):
+        self.inter = inter.trunc()
+        self.restr = self.inter.transpose()
+
+        self.Q = inter @ self.restr + q_inter @ q_restr
+        self.invQ = 2 * self.Q.trunc() - self.Q
+
+        self.A = self.Q @ A @ self.invQ
+        self.residual = self.Q @ b
+
+        self.All = self.restr @ self.A @ self.inter
+        self.res_l = self.restr @ self.residual
+
+    def postprocess_solution(self, x):
+        return self.invQ @ x
+
+def solve_iteration(bs, smooth, x):
 
     smoothing_iter = 5
     delta = np.zeros_like(x)
 
     with profile('smoothing'):
         for _ in range(smoothing_iter):
-            delta = smooth(delta, residual)
+            delta = smooth(delta, bs.residual)
 
     with profile('coarse solve'):
-        bs.res_l = bs.restr @ (residual - bs.A @ delta)
+        bs.res_l = bs.restr @ (bs.residual - bs.A @ delta)
         coarse_delta, _ = cg(bs.All, bs.res_l, atol=1e-5)
 
 
     with profile('update solution'):
         delta += bs.inter @ coarse_delta
         x += delta
-        residual -= bs.A @ delta
-
-    return x, residual
-
-
-def solve(A, b, inter, restr, q_inter, q_restr):
-    residual = np.array(b)
-    x = np.zeros_like(b)
-    norm_res = norm_b = norm(b)
-    tol = 1e-5
-    it = 0
-    max_iter = 100
-
-    bs = CoarseSystem(A, b, inter, restr, q_inter, q_restr)
-    #bs = BlockSystem(A, b, inter, restr, q_inter, q_restr)
-    smooth = GaussSeidel(bs.A, relaxation_w=0.5)
-
-    while (norm_res > tol * norm_b and it < max_iter):
-        x, residual = solve_iteration(bs, smooth, x, residual)
-        norm_res = norm(residual)
-        it += 1
-        log.info("%d %f", it, norm_res)
-        log.debug(norm(b - A@x))
-        log.debug(norm(residual))
+        bs.residual -= bs.A @ delta
 
     return x
+
+
+def solve(bs):
+    x = np.zeros_like(b)
+    tol = 1e-5
+    it = 0
+    max_iter = 10
+
+    smooth = GaussSeidel(bs.A, relaxation_w=0.5)
+
+    norm_res = norm_b = norm(bs.residual)
+
+    while (norm_res > tol * norm_b and it < max_iter):
+        x = solve_iteration(bs, smooth, x)
+        norm_res = norm(bs.residual)
+        it += 1
+        log.info("%d %f", it, norm_res)
+        log.debug(norm(b - A@bs.postprocess_solution(x)))
+        log.debug("%f %f", norm(bs.residual), 0.0)#norm(bs.invQ @ bs.residual))
+
+    return bs.postprocess_solution(x)
 
 
 class CoarseSystem(object):
@@ -181,7 +191,7 @@ def solve_separate(A, b, inter, restr, q_inter, q_restr):
     norm_res = norm_b = norm(b)
     tol = 1e-5
     it = 0
-    max_iter = 100
+    max_iter = 10
 
     while (norm_res > tol * norm_b and it < max_iter):
         x, residual = solve_iter_separate(bs, x)
@@ -203,15 +213,18 @@ if __name__ == '__main__':
     with profile('problem load'):
         base_path = Path('./examples/bracket')
 
-        A = read_mm(base_path / 'last_fine_A.mm')
-        b = read_mm(base_path / 'last_fine_b.mm')
+        A = read_mm(base_path / 'first_fine_A.mm')
+        b = read_mm(base_path / 'first_fine_b.mm')
         inter = read_mm(base_path / 'interpolation.mm')
         restr = read_mm(base_path / 'restriction.mm')
         q_inter = read_mm(base_path / 'quad_interpolation.mm')
         q_restr = read_mm(base_path / 'quad_restriction.mm')
 
+    bs = RawSystem(A, b, inter, restr, q_inter, q_restr)
+    #bs = PureHierarchicalSystem(A, b, inter, restr, q_inter, q_restr)
+    #bs = BlockSystem(A, b, inter, restr, q_inter, q_restr)
     #x = solve_separate(A, b, inter, restr, q_inter, q_restr)
-    x = solve(A, b, inter, restr, q_inter, q_restr)
+    x = solve(bs)
 
     with profile('solution check'):
         check_solution(A, x, b)
