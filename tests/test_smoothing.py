@@ -4,7 +4,7 @@ import numpy as np
 from scipy import sparse
 from scipy.linalg import norm
 
-from solver_sandbox.hierarchical_iterative_solver import GaussSeidel, Jacobi
+from solver_sandbox.smoothing import GaussSeidel, Jacobi
 
 
 def test_4x4():

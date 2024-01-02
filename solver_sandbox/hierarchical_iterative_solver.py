@@ -2,12 +2,12 @@ import logging
 
 import numpy as np
 
-from scipy import sparse
 from scipy.linalg import norm
-from scipy.sparse.linalg import cg, spsolve_triangular
+from scipy.sparse.linalg import cg
 
 from .performance import profile
 from .utilities import check_solution
+from .smoothing import GaussSeidel, Jacobi
 
 log = logging.getLogger(__name__)
 
@@ -69,8 +69,6 @@ def solve_iteration(bs, x, residual):
     smoothing_iter = 5
     delta = np.zeros_like(x)
 
-    smooth = GaussSeidel(bs.A, relaxation_w=0.5)
-
     with profile('smoothing'):
         for _ in range(smoothing_iter):
             delta = smooth(delta, residual)
@@ -98,9 +96,10 @@ def solve(A, b, inter, restr, q_inter, q_restr):
 
     bs = CoarseSystem(A, b, inter, restr, q_inter, q_restr)
     #bs = BlockSystem(A, b, inter, restr, q_inter, q_restr)
+    smooth = GaussSeidel(bs.A, relaxation_w=0.5)
 
     while (norm_res > tol * norm_b and it < max_iter):
-        x, residual = solve_iteration(bs, x, residual)
+        x, residual = solve_iteration(bs, smooth, x, residual)
         norm_res = norm(residual)
         it += 1
         log.info("%d %f", it, norm_res)
