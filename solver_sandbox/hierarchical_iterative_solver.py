@@ -37,13 +37,13 @@ class MixedSystem(object):
     Recalculated matrices
     """
     def __init__(self, A, b, inter, restr, q_inter, q_restr):
-        int = inter.trunc()
+        int_ = inter.trunc()
 
-        self.Q = int @ restr + q_inter @ q_restr
+        self.Q = int_ @ restr + q_inter @ q_restr
         self.invQ = 2 * self.Q.trunc() - self.Q
 
         self.inter = inter
-        self.restr = int.transpose() @ self.Q
+        self.restr = int_.transpose() @ self.Q
 
         self.A = A
         self.residual = b.copy()
@@ -71,12 +71,12 @@ class PureHierarchicalSystem(object):
         self.residual = self.Q @ b
 
         self.All = self.restr @ self.A @ self.inter
-        self.res_l = self.restr @ self.residual
+        #self.res_l = self.restr @ self.residual
 
     def postprocess_solution(self, x):
         return self.invQ @ x
 
-def solve_iteration(bs, smooth, x):
+def solve_iteration(bs, smooth, x, cg_tolerance):
 
     smoothing_iter = 5
     delta = np.zeros_like(x)
@@ -87,7 +87,7 @@ def solve_iteration(bs, smooth, x):
 
     with profile('coarse solve'):
         bs.res_l = bs.restr @ (bs.residual - bs.A @ delta)
-        coarse_delta, _ = cg(bs.All, bs.res_l, atol=1e-5)
+        coarse_delta, _ = cg(bs.All, bs.res_l, atol=cg_tolerance)
 
 
     with profile('update solution'):
@@ -98,23 +98,23 @@ def solve_iteration(bs, smooth, x):
     return x
 
 
-def solve(bs):
+def solve(bs, max_iter = 10, tolerance = 1e-5, cg_tolerance = 1e-5):
     x = np.zeros_like(b)
-    tol = 1e-5
     it = 0
-    max_iter = 10
 
     smooth = GaussSeidel(bs.A, relaxation_w=0.5)
 
     norm_res = norm_b = norm(bs.residual)
 
-    while (norm_res > tol * norm_b and it < max_iter):
-        x = solve_iteration(bs, smooth, x)
+    while (norm_res > tolerance * norm_b and it < max_iter):
+        x = solve_iteration(bs, smooth, x, cg_tolerance)
         norm_res = norm(bs.residual)
         it += 1
         log.info("%d %f", it, norm_res)
-        log.debug(norm(b - A@bs.postprocess_solution(x)))
-        log.debug("%f %f", norm(bs.residual), 0.0)#norm(bs.invQ @ bs.residual))
+        #log.debug(norm(b - A@bs.postprocess_solution(x)))
+        #log.debug("%f %f", norm(bs.residual), 0.0)#norm(bs.invQ @ bs.residual))
+        log.debug("%f %f", norm(bs.residual), norm(bs.invQ @ bs.residual))
+
 
     return bs.postprocess_solution(x)
 
@@ -220,22 +220,17 @@ if __name__ == '__main__':
         q_inter = read_mm(base_path / 'quad_interpolation.mm')
         q_restr = read_mm(base_path / 'quad_restriction.mm')
 
-    bs = RawSystem(A, b, inter, restr, q_inter, q_restr)
-    #bs = PureHierarchicalSystem(A, b, inter, restr, q_inter, q_restr)
-    #bs = BlockSystem(A, b, inter, restr, q_inter, q_restr)
-    #x = solve_separate(A, b, inter, restr, q_inter, q_restr)
-    x = solve(bs)
+    problems = [
+        #("raw problem", RawSystem(A, b, inter, restr, q_inter, q_restr)),
+        #("mixed problem", MixedSystem(A, b, inter, restr, q_inter, q_restr)),
+        (
+            "pure hierarhical",
+            PureHierarchicalSystem(A, b, inter, restr, q_inter, q_restr)
+        )
+    ]
 
-    with profile('solution check'):
-        check_solution(A, x, b)
+    for label, system in problems:
+        x = solve(system)
 
-    '''
-    GS 1.5
-    real    4m46.455s
-    user    5m41.484s
-    sys     3m7.611s
-    GS 1.0
-    real    4m47.758s
-    user    5m49.839s
-    sys     3m37.062s
-    '''
+        with profile('solution check'):
+            check_solution(A, x, b, log_level=logging.WARNING)
