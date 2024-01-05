@@ -39,8 +39,13 @@ class MixedSystem(object):
     def __init__(self, A, b, inter, restr, q_inter, q_restr):
         int_ = inter.trunc()
 
-        self.Q = int_ @ restr + q_inter @ q_restr
-        self.invQ = 2 * self.Q.trunc() - self.Q
+        #self.invQ = int_ @ restr #+ q_inter @ q_restr
+        self.invQ = inter @ int_.transpose() + q_inter @ q_restr
+        log.debug(inter.nnz)
+        log.debug((self.invQ @ int_ != inter).nnz)
+        assert((self.invQ @ int_ != inter).nnz == 0)
+        #self.Q = 2 * self.invQ.trunc() - self.invQ
+        self.Q = self.invQ.transpose()
 
         self.inter = inter
         self.restr = int_.transpose() @ self.Q
@@ -63,12 +68,20 @@ class PureHierarchicalSystem(object):
     def __init__(self, A, b, inter, restr, q_inter, q_restr):
         self.inter = inter.trunc()
         self.restr = self.inter.transpose()
+        # Some sanity checks (efficient comparison of equality for CSR)
+        assert((restr != inter.transpose()).nnz == 0)
+        assert((q_restr != q_inter.transpose()).nnz == 0)
 
-        self.Q = inter @ self.restr + q_inter @ q_restr
-        self.invQ = 2 * self.Q.trunc() - self.Q
+        self.invQ = inter @ self.restr + q_inter @ q_restr
+        self.invQt = self.invQ.transpose()
+        self.Q = 2 * self.invQ.trunc() - self.invQ
+        from scipy import sparse
+        idt = sparse.eye(*self.Q.shape)
+        assert(((self.Q @ self.invQ) != idt).nnz == 0)
 
-        self.A = self.Q @ A @ self.invQ
-        self.residual = self.Q @ b
+        self.A = self.invQt @ A @ self.invQ
+        self.residual = self.invQt @ b
+        self.b = self.invQt @ b
 
         self.All = self.restr @ self.A @ self.inter
         #self.res_l = self.restr @ self.residual
@@ -87,13 +100,17 @@ def solve_iteration(bs, smooth, x, cg_tolerance):
 
     with profile('coarse solve'):
         bs.res_l = bs.restr @ (bs.residual - bs.A @ delta)
-        coarse_delta, _ = cg(bs.All, bs.res_l, atol=cg_tolerance)
+        coarse_delta, i = cg(bs.All, bs.res_l, atol=cg_tolerance, maxiter=500)
 
+    if i:
+        log.warning("CG did not converge (%d)" % i)
 
     with profile('update solution'):
         delta += bs.inter @ coarse_delta
         x += delta
         bs.residual -= bs.A @ delta
+        log.debug(norm(bs.residual))
+        #log.debug(norm(bs.b - bs.A @ x))
 
     return x
 
@@ -113,7 +130,7 @@ def solve(bs, max_iter = 10, tolerance = 1e-5, cg_tolerance = 1e-5):
         log.info("%d %f", it, norm_res)
         #log.debug(norm(b - A@bs.postprocess_solution(x)))
         #log.debug("%f %f", norm(bs.residual), 0.0)#norm(bs.invQ @ bs.residual))
-        log.debug("%f %f", norm(bs.residual), norm(bs.invQ @ bs.residual))
+        #log.debug("%f %f", norm(bs.residual), norm(bs.invQ @ bs.residual))
 
 
     return bs.postprocess_solution(x)
@@ -208,7 +225,7 @@ if __name__ == '__main__':
     from pathlib import Path
     from .utilities import read_mm
 
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.WARNING)
 
     with profile('problem load'):
         base_path = Path('./examples/bracket')
@@ -221,8 +238,8 @@ if __name__ == '__main__':
         q_restr = read_mm(base_path / 'quad_restriction.mm')
 
     problems = [
-        #("raw problem", RawSystem(A, b, inter, restr, q_inter, q_restr)),
-        #("mixed problem", MixedSystem(A, b, inter, restr, q_inter, q_restr)),
+        ("raw problem", RawSystem(A, b, inter, restr, q_inter, q_restr)),
+        ("mixed problem", MixedSystem(A, b, inter, restr, q_inter, q_restr)),
         (
             "pure hierarhical",
             PureHierarchicalSystem(A, b, inter, restr, q_inter, q_restr)
@@ -230,7 +247,8 @@ if __name__ == '__main__':
     ]
 
     for label, system in problems:
-        x = solve(system)
+        with profile(label, log_level=logging.WARNING):
+            x = solve(system, max_iter=50, cg_tolerance=1e-1)
 
         with profile('solution check'):
             check_solution(A, x, b, log_level=logging.WARNING)
