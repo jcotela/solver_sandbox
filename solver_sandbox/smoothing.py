@@ -36,6 +36,7 @@ class GaussSeidel(object):
         U = sparse.triu(A, k=1, format='csr')
         L = sparse.tril(A, k=-1, format='csr')
         D = sparse.diags(A.diagonal())
+        assert(U.nnz + L.nnz + D.nnz == A.nnz)
         self.w = relaxation_w
         self.L = self.w * L +  D
         self.U = self.w * U + (self.w - 1) * D

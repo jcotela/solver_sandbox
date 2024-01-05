@@ -18,7 +18,11 @@ def read_mm(file_path):
         return data.reshape((data.shape[0],))
 
     # return matrices as scipy.sparse.csr_array
-    return csr_array(data)
+    matrix = csr_array(data)
+    log.debug(file_path)
+    log.debug(len(matrix.nonzero()[0]))
+    log.debug(matrix.shape)
+    return matrix
 
 
 def check_solution(A, x, b, log_level=logging.INFO):
