@@ -5,7 +5,7 @@ import numpy as np
 from scipy.linalg import norm
 from scipy.sparse.linalg import cg, LinearOperator
 
-from .performance import profile
+from .performance import profile, solver_report_callback
 from .utilities import check_solution
 from .smoothing import GaussSeidel, Jacobi
 
@@ -102,7 +102,8 @@ def solve_iteration(bs, smooth, x, cg_tolerance):
         bs.res_l = bs.restr @ (bs.residual - bs.A @ delta)
         coarse_delta, i = cg(
             bs.All, bs.res_l, tol=cg_tolerance, atol=1e-12, maxiter=500,
-            M=bs.preconditioner)
+            M=bs.preconditioner,
+            callback=solver_report_callback(logging.DEBUG))
 
     if i:
         log.warning("CG did not converge (%d)" % i)
@@ -254,7 +255,7 @@ if __name__ == '__main__':
 
     for label, system in problems:
         with profile(label, log_level=logging.WARNING):
-            x = solve(system, max_iter=50, cg_tolerance=1e-1)
+            x = solve(system, max_iter=50, cg_tolerance=1e-5)
 
         with profile('solution check'):
             check_solution(A, x, b, log_level=logging.WARNING)
