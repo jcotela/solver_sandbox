@@ -4,8 +4,8 @@ import numpy as np
 
 from scipy.sparse.linalg import cg, LinearOperator
 
-from performance import profile, solver_report_callback as report
-from utilities import check_solution
+from .performance import profile, solver_report_callback as report
+from .utilities import check_solution
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def solve(A, b):
 
 if __name__ == '__main__':
     from pathlib import Path
-    from utilities import read_mm
+    from .utilities import read_mm
 
     logging.basicConfig(level=logging.DEBUG)
 
