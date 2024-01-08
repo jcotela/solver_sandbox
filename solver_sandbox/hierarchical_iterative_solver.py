@@ -3,7 +3,7 @@ import logging
 import numpy as np
 
 from scipy.linalg import norm
-from scipy.sparse.linalg import cg
+from scipy.sparse.linalg import cg, LinearOperator
 
 from .performance import profile
 from .utilities import check_solution
@@ -100,7 +100,9 @@ def solve_iteration(bs, smooth, x, cg_tolerance):
 
     with profile('coarse solve'):
         bs.res_l = bs.restr @ (bs.residual - bs.A @ delta)
-        coarse_delta, i = cg(bs.All, bs.res_l, atol=cg_tolerance, maxiter=500)
+        coarse_delta, i = cg(
+            bs.All, bs.res_l, tol=cg_tolerance, atol=1e-12, maxiter=500,
+            M=bs.preconditioner)
 
     if i:
         log.warning("CG did not converge (%d)" % i)
@@ -118,6 +120,10 @@ def solve_iteration(bs, smooth, x, cg_tolerance):
 def solve(bs, max_iter = 10, tolerance = 1e-5, cg_tolerance = 1e-5):
     x = np.zeros_like(b)
     it = 0
+
+    diag = bs.All.diagonal()
+    bs.preconditioner = LinearOperator(
+        bs.All.shape, lambda x: np.divide(x, diag))
 
     smooth = GaussSeidel(bs.A, relaxation_w=0.5)
 
